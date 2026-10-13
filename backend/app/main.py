@@ -28,7 +28,7 @@ Base.metadata.create_all(engine)
 
 app = FastAPI(title="3S Calculator API", version="1.0.0")
 origins = [x.strip() for x in os.getenv("CORS_ORIGINS", "*").split(",") if x.strip()]
-app.add_middleware(CORSMiddleware, allow_origins=origins, allow_methods=["GET", "POST", "PATCH"], allow_headers=["*"])
+app.add_middleware(CORSMiddleware, allow_origins=origins, allow_methods=["GET", "POST", "PATCH", "DELETE"], allow_headers=["*"])
 
 def db():
     s = SessionLocal()
@@ -61,6 +61,9 @@ class LeadRequest(BaseModel):
     marketing_consent: bool = False
     business_name: str | None = Field(default=None, max_length=160)
     source: str = Field(default="website", max_length=100)
+
+class LeadDeleteRequest(BaseModel):
+    ids: list[str] = Field(min_length=1, max_length=500)
 
 def row_json(r): return {"id": r.id, "kind": r.kind, "created_at": r.created_at.isoformat(), **json.loads(r.data)}
 
@@ -112,7 +115,7 @@ def report_pdf(report_id: str, session: Session = Depends(db)):
     c.drawString(205, 754, "Solar estimate")
     c.setFillColorRGB(.15, .2, .22); c.setFont("Helvetica", 10)
     y = 710
-    lines = [f"Report: {report_id}", f"Category: {d['category'].title()}", f"Monthly bill: INR {d['inputs']['monthly_bill']:,.0f}", f"Suggested capacity range: {d['capacity_kw']['low']} - {d['capacity_kw']['high']} kW", f"Annual generation: {d['annual_generation_kwh']:,} kWh", f"Estimated annual bill savings: INR {d['annual_savings_inr']:,}", f"Indicative project cost: INR {d['gross_cost_inr']:,}", f"Subsidy: not assessed; none deducted", f"Simple payback: {d['payback_years'] if d['payback_years'] else 'Not recoverable'} years", f"Carbon reduction: {d['carbon_reduction_tonnes_year']} tCO2e/year", "", "Planning estimate only. Verify site conditions, utility tariffs, export rules, project pricing and eligibility.", "No subsidy has been included. Generation depends on site irradiation, orientation, shading and system design.", f"Assumption set: {d['assumptions']['version']} | Created: {d['created_at']}"]
+    lines = [f"Report: {report_id}", f"Category: {d['category'].title()}", f"Monthly bill: INR {d['inputs']['monthly_bill']:,.0f}", f"Estimated monthly bill savings: INR {d['monthly_savings_range_inr']['low']:,} - {d['monthly_savings_range_inr']['high']:,}", f"Estimated bill reduction: {d['bill_reduction_range_percent']['low']}% - {d['bill_reduction_range_percent']['high']}%", f"Suggested system size: {d['capacity_kw']['low']} kW", f"Annual generation: {d['annual_generation_kwh']:,} kWh", f"Estimated annual bill savings: INR {d['annual_savings_range_inr']['low']:,} - {d['annual_savings_range_inr']['high']:,}", f"Indicative project cost: INR {d['gross_cost_inr']:,}", f"Subsidy: not assessed; none deducted", f"Simple payback: {d['payback_years'] if d['payback_years'] else 'Not recoverable'} years", f"Carbon reduction: {d['carbon_reduction_tonnes_year']} tCO2e/year", "", "Planning estimate only. Verify site conditions, utility tariffs, export rules, project pricing and eligibility.", "No subsidy has been included. Generation depends on site irradiation, orientation, shading and system design.", f"Assumption set: {d['assumptions']['version']} | Created: {d['created_at']}"]
     for line in lines:
         if y < 75: c.showPage(); y = 744; c.setFont("Helvetica", 10)
         c.drawString(48, y, line[:120]); y -= 23
@@ -144,6 +147,19 @@ def leads(session: Session = Depends(db), q: str = ""):
     items = session.scalars(select(Record).where(Record.kind == "lead").order_by(Record.created_at.desc())).all()
     result = [row_json(r) for r in items]
     return [x for x in result if not q or q.lower() in json.dumps(x, ensure_ascii=False).lower()]
+
+@app.delete("/api/v1/admin/leads", dependencies=[Depends(require_admin)])
+def delete_leads(payload: LeadDeleteRequest, session: Session = Depends(db)):
+    ids = set(payload.ids)
+    records = session.scalars(select(Record).where(Record.kind == "lead", Record.id.in_(ids))).all()
+    for lead in records:
+        report_id = json.loads(lead.data).get("report_id")
+        if report_id:
+            report = session.get(Record, report_id)
+            if report and report.kind == "calculation": session.delete(report)
+        session.delete(lead)
+    session.commit()
+    return {"deleted": len(records)}
 
 @app.patch("/api/v1/admin/leads/{lead_id}", dependencies=[Depends(require_admin)])
 def update_lead(lead_id: str, body: dict, session: Session = Depends(db)):

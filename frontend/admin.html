@@ -1,3 +1,100 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>3S Calculator Admin</title><link rel="stylesheet" href="styles.css"><style>main{padding:45px 0}table{width:100%;border-collapse:collapse;background:white}td,th{padding:12px;border-bottom:1px solid #dfe9e9;text-align:left;font-size:13px}th{color:#64767b}.toolbar{display:flex;gap:10px;margin:20px 0;flex-wrap:wrap}.toolbar input{padding:11px;border:1px solid #dfe9e9;border-radius:8px;min-width:240px}.adminbox{background:white;border:1px solid #dfe9e9;border-radius:14px;padding:22px;overflow:auto}.summary{display:flex;gap:12px;flex-wrap:wrap}.summary span{background:#f3f8f7;padding:12px;border-radius:9px}</style></head><body><div class="shell"><header class="topbar"><a href="index.html" aria-label="Return to calculator"><img class="logo" src="assets/3s-solutions-logo.png" alt="3S Solutions"></a><strong>Lead admin</strong><a href="index.html">Return to calculator</a></header><main><h1 style="font-size:38px">Lead dashboard</h1><p class="sub">This browser view uses your configured single-operator API key. Keep the key private.</p><div class="toolbar"><input id="key" type="password" autocomplete="current-password" placeholder="Admin API key"><button class="btn" onclick="loadLeads()">Connect</button><button class="btn secondary" onclick="downloadCsv()">Export CSV</button><button class="btn secondary" onclick="clearKey()">Forget key</button></div><div id="message"></div><div class="summary" id="summary"></div><div class="adminbox"><table><thead><tr><th>Created</th><th>Name</th><th>Phone</th><th>Category</th><th>Location</th><th>Annual savings</th><th>Status</th></tr></thead><tbody id="rows"></tbody></table></div></main></div><script src="config.js"></script><script>
-const API=window.API_BASE || 'http://127.0.0.1:8000/api/v1';let leads=[];const key=document.querySelector('#key');try{key.value=sessionStorage.getItem('3s-admin-key')||''}catch{}function clearKey(){key.value="";try{sessionStorage.removeItem("3s-admin-key")}catch{};document.querySelector("#message").textContent="Admin key cleared";document.querySelector("#rows").innerHTML="";document.querySelector("#summary").innerHTML=""}function headers(){return {'X-Admin-Key':key.value,'Content-Type':'application/json'}}async function loadLeads(){try{sessionStorage.setItem('3s-admin-key',key.value)}catch{};try{let r=await fetch(API+'/admin/leads',{headers:headers()});if(!r.ok)throw Error(r.status===401?'Admin key rejected or ADMIN_API_KEY is missing on the backend.':'API returned HTTP '+r.status+'. Check the backend service.');leads=await r.json();document.querySelector('#message').textContent='Connected · '+leads.length+' leads';document.querySelector('#summary').innerHTML=['Total: '+leads.length,...['residential','commercial','industrial'].map(c=>c+': '+leads.filter(x=>x.category===c).length)].map(x=>'<span>'+x+'</span>').join('');document.querySelector('#rows').innerHTML=leads.map(l=>`<tr><td>${new Date(l.created_at).toLocaleDateString()}</td><td>${esc(l.name)}</td><td>${esc(l.phone)}</td><td>${esc(l.category)}</td><td>${esc(l.city)}, ${esc(l.state)}</td><td>${l.annual_savings_inr==null?'—':'₹'+Number(l.annual_savings_inr).toLocaleString('en-IN')}</td><td><select onchange="setStatus('${l.id}',this.value)">${['New','Contacted','Qualified','Consultation Scheduled','Site Survey Completed','Proposal Sent','Won','Lost','Unqualified'].map(s=>`<option ${s===l.status?'selected':''}>${s}</option>`).join('')}</select></td></tr>`).join('')}catch(e){document.querySelector('#message').textContent=e instanceof TypeError?'Cannot reach the API. Check the Render URL, service status, and CORS_ORIGINS.':e.message}}function esc(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}async function setStatus(id,status){let r=await fetch(API+'/admin/leads/'+id,{method:'PATCH',headers:headers(),body:JSON.stringify({status})});if(r.ok)loadLeads();else alert('Could not update status')}async function downloadCsv(){let r=await fetch(API+'/admin/export.csv',{headers:headers()});if(!r.ok){alert('Unable to export leads');return}let a=document.createElement('a');a.href=URL.createObjectURL(await r.blob());a.download='3s-leads.csv';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}
-</script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>3S Calculator Admin</title>
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    main{padding:45px 0}table{width:100%;border-collapse:collapse;background:white}td,th{padding:12px;border-bottom:1px solid #dfe9e9;text-align:left;font-size:13px}th{color:#64767b}.toolbar{display:flex;gap:10px;margin:20px 0;flex-wrap:wrap;align-items:center}.toolbar input{padding:11px;border:1px solid #dfe9e9;border-radius:8px;min-width:240px}.adminbox{background:white;border:1px solid #dfe9e9;border-radius:14px;padding:22px;overflow:auto}.summary{display:flex;gap:12px;flex-wrap:wrap}.summary span{background:#f3f8f7;padding:12px;border-radius:9px}.danger{background:#b42318!important;color:#fff!important}.danger:hover{background:#912018!important}.action-cell{white-space:nowrap}.row-delete{padding:8px 12px!important}.bulk-delete[hidden]{display:none}
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <a href="index.html" aria-label="Return to calculator"><img class="logo" src="assets/3s-solutions-logo.png" alt="3S Solutions"></a>
+      <strong>Lead admin</strong>
+      <a href="index.html">Return to calculator</a>
+    </header>
+    <main>
+      <h1 style="font-size:38px">Lead dashboard</h1>
+      <p class="sub">This browser view uses your configured single-operator API key. Keep the key private.</p>
+      <div class="toolbar">
+        <input id="key" type="password" autocomplete="current-password" placeholder="Admin API key">
+        <button class="btn" onclick="loadLeads()">Connect</button>
+        <button class="btn secondary" onclick="downloadCsv()">Export CSV</button>
+        <button id="deleteSelected" class="btn danger bulk-delete" onclick="deleteSelectedLeads()" hidden>Delete selected</button>
+      </div>
+      <div id="message" role="status" aria-live="polite"></div>
+      <div class="summary" id="summary"></div>
+      <div class="adminbox">
+        <table>
+          <thead><tr>
+            <th><input id="selectAll" type="checkbox" aria-label="Select all leads" onchange="selectAllLeads(this.checked)"></th>
+            <th>Created</th><th>Name</th><th>Phone</th><th>Category</th><th>Location</th><th>Annual savings</th><th>Status</th><th>Actions</th>
+          </tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+    </main>
+  </div>
+  <script src="config.js"></script>
+  <script>
+    const API=window.API_BASE || 'http://127.0.0.1:8000/api/v1';
+    let leads=[];
+    const selectedLeadIds=new Set();
+    const key=document.querySelector('#key');
+    try{key.value=sessionStorage.getItem('3s-admin-key')||''}catch{}
+
+    function headers(){return {'X-Admin-Key':key.value,'Content-Type':'application/json'}}
+    function updateDeleteControls(){
+      const button=document.querySelector('#deleteSelected');
+      button.hidden=selectedLeadIds.size===0;
+      button.textContent=`Delete selected (${selectedLeadIds.size})`;
+      const all=document.querySelector('#selectAll');
+      if(all)all.checked=leads.length>0&&selectedLeadIds.size===leads.length;
+    }
+    function toggleLead(id,checked){if(checked)selectedLeadIds.add(id);else selectedLeadIds.delete(id);updateDeleteControls()}
+    function selectAllLeads(checked){selectedLeadIds.clear();if(checked)leads.forEach(l=>selectedLeadIds.add(l.id));document.querySelectorAll('.lead-select').forEach(box=>box.checked=checked);updateDeleteControls()}
+    function esc(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+
+    async function loadLeads(){
+      try{sessionStorage.setItem('3s-admin-key',key.value)}catch{}
+      try{
+        const r=await fetch(API+'/admin/leads',{headers:headers()});
+        if(!r.ok)throw Error(r.status===401?'Admin key rejected or ADMIN_API_KEY is missing on the backend.':'API returned HTTP '+r.status+'. Check the backend service.');
+        leads=await r.json();selectedLeadIds.clear();
+        document.querySelector('#message').textContent='Connected · '+leads.length+' leads';
+        document.querySelector('#summary').innerHTML=['Total: '+leads.length,...['residential','commercial','industrial'].map(c=>c+': '+leads.filter(x=>x.category===c).length)].map(x=>'<span>'+esc(x)+'</span>').join('');
+        document.querySelector('#rows').innerHTML=leads.length?leads.map(l=>`<tr>
+          <td><input class="lead-select" type="checkbox" aria-label="Select lead ${esc(l.name)}" onchange="toggleLead('${l.id}',this.checked)"></td>
+          <td>${new Date(l.created_at).toLocaleDateString()}</td><td>${esc(l.name)}</td><td>${esc(l.phone)}</td><td>${esc(l.category)}</td>
+          <td>${esc(l.city)}, ${esc(l.state)}</td><td>${l.annual_savings_inr==null?'—':'₹'+Number(l.annual_savings_inr).toLocaleString('en-IN')}</td>
+          <td><select aria-label="Lead status" onchange="setStatus('${l.id}',this.value)">${['New','Contacted','Qualified','Consultation Scheduled','Site Survey Completed','Proposal Sent','Won','Lost','Unqualified'].map(s=>`<option value="${esc(s)}" ${s===l.status?'selected':''}>${esc(s)}</option>`).join('')}</select></td>
+          <td class="action-cell"><button class="btn danger row-delete" onclick="deleteLeads(['${l.id}'])" aria-label="Delete lead ${esc(l.name)}">Delete</button></td>
+        </tr>`).join(''):'<tr><td colspan="9">No leads found.</td></tr>';
+        updateDeleteControls();
+      }catch(e){document.querySelector('#message').textContent=e instanceof TypeError?'Cannot reach the API. Check the API URL, service status, and CORS_ORIGINS.':e.message}
+    }
+
+    async function deleteSelectedLeads(){if(selectedLeadIds.size)await deleteLeads([...selectedLeadIds])}
+    async function deleteLeads(ids){
+      const unique=[...new Set(ids)];
+      const warning=unique.length===1?'Delete this lead permanently? Its linked calculation report will also be deleted. This cannot be undone.':`Delete these ${unique.length} leads permanently? Their linked calculation reports will also be deleted. This cannot be undone.`;
+      if(!window.confirm(warning))return;
+      try{
+        const r=await fetch(API+'/admin/leads',{method:'DELETE',headers:headers(),body:JSON.stringify({ids:unique})});
+        if(!r.ok)throw Error('Delete failed (HTTP '+r.status+'). Check your admin key and backend logs.');
+        const result=await r.json();await loadLeads();
+        document.querySelector('#message').textContent=`Deleted ${result.deleted} lead${result.deleted===1?'':'s'}. Connected · ${leads.length} leads remain.`;
+      }catch(e){document.querySelector('#message').textContent=e instanceof TypeError?'Cannot reach the API. Check the API URL, service status, and CORS_ORIGINS.':e.message}
+    }
+    async function setStatus(id,status){
+      try{const r=await fetch(API+'/admin/leads/'+id,{method:'PATCH',headers:headers(),body:JSON.stringify({status})});if(!r.ok)throw Error('Could not update lead status (HTTP '+r.status+').');await loadLeads()}catch(e){document.querySelector('#message').textContent=e.message}
+    }
+    async function downloadCsv(){
+      try{const r=await fetch(API+'/admin/export.csv',{headers:headers()});if(!r.ok)throw Error('Export failed (HTTP '+r.status+'). Connect with a valid admin key first.');const a=document.createElement('a');a.href=URL.createObjectURL(await r.blob());a.download='3s-leads.csv';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}catch(e){document.querySelector('#message').textContent=e instanceof TypeError?'Cannot reach the API. Check the API URL, service status, and CORS_ORIGINS.':e.message}
+    }
+  </script>
+</body>
+</html>
